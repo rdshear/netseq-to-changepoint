@@ -1,0 +1,13 @@
+{
+    "netsq_to_changepoint.sampleName" : "wt-2",
+    "netsq_to_changepoint.genelist" : "/n/groups/churchman/rds19/data/S005/genelist.gff",
+    "netsq_to_changepoint.CoverageBedgraph_Pos" : "/n/groups/churchman/rds19/data/S005/test-1.pos.bedgraph.gz",
+    "netsq_to_changepoint.CoverageBedgraph_Neg" : "/n/groups/churchman/rds19/data/S005/test-1.neg.bedgraph.gz",
+    "netsq_to_changepoint.Cp_algorithm" : "CEZINB",
+    "netsq_to_changepoint.ShardCount" : 1,
+    "netsq_to_changepoint.MaxGenes" : 256,
+    "netsq_to_changepoint.MaxK" : 8,
+    "netsq_to_changepoint.GeneTrimLength" : 800,
+    "netsq_to_changepoint.threads" : 4
+    
+}
