@@ -11,10 +11,11 @@ LABEL description="Docker image with components for netseq-to-changepoints pipel
 
 WORKDIR $HOME
 
-ADD scripts/ /scripts/
 RUN Rscript --vanilla -e 'BiocManager::install(c("plyranges", "Biostrings", \
     "GenomicRanges", "rtracklayer", \
     "breakpoint", "doMC", "foreach", "foreach", "kableExtra"), \
      quietly = TRUE, update = TRUE, ask = FALSE)'
+
+ADD scripts/ /scripts/
 
 CMD ["/bin/bash"]

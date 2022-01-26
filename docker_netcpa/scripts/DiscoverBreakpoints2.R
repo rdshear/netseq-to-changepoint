@@ -17,9 +17,12 @@
 
 suppressPackageStartupMessages({
   library(parallel)
+  library(doParallel)
+  library(iterators)
   library(GenomicRanges)
   library(rtracklayer)
   library(breakpoint)
+  library(foreach)
 })
 set.seed(20190416)
 
@@ -31,11 +34,11 @@ if (interactive() && exists("DEBUG.TEST")) {
     c("/n/groups/churchman/rds19/data/S005/genelist.gff",
       "800", # Maximum gene body length
       "8", # Kmax (maximum number of segments)
-      "256", # Sample size
+      "16", # Sample size
       "CEZINB",
       "/n/groups/churchman/rds19/data/S005/wt-2.pos.bedgraph.gz",
       "/n/groups/churchman/rds19/data/S005/wt-2.neg.bedgraph.gz",
-      "/n/groups/churchman/rds19/data/S005/wt-2.CEZINB.gff3")
+      "~/Downloads/wt-2.CEZINB.gff3")
 
   }
 }
@@ -52,6 +55,7 @@ bedgraph.pos.filename <- args[6]
 bedgraph.neg.filename <- args[7]
 out.filename <- args[8]
 
+
 start.time <- Sys.time()
 cat(sprintf("Starting at %s. Sample name = %s. Max genes = %d", 
         start.time, sample.name, maxGenes))
@@ -60,7 +64,8 @@ algorithm <- "CEZINB"
 
 cores <- detectCores()
 options(mc.cores = max(cores - 1, 1))
-cat(sprintf("Number of cores detected = %d. Cores to use = %d.", cores, getOption("mc.cores")))
+registerDoParallel(getOption("mc.cores"))
+cat(sprintf("Number of cores detected = %d. Cores to use = %d.", cores, getDoParWorkers()))
 
 
 # read the two bedgraph files into a single GRanges object
@@ -94,9 +99,10 @@ if (maxGenes > 0 & maxGenes < length(g)) {
 h <- findOverlaps(g, scores)
 h <- split(subjectHits(h), queryHits(h))
 
-result <- mclapply(seq_along(g), function(i) {
-    u <- g[i]
-    x <- scores[h[[i]]]
+#result <- mclapply(seq_along(g), function(i) {
+result <- foreach (u = (foreach(x = 1:length(g)) %dopar% g[x]), 
+                   x = iter(lapply(h, function(u) scores[u])), 
+                   .packages = c("breakpoint", "GenomicRanges")) %do% {
     start(x[1]) <- start(u)
     end(x[length(x)]) <- end(u)
     s <- rep(x$score, width(x))
@@ -142,13 +148,8 @@ result <- mclapply(seq_along(g), function(i) {
                m = stats["m", ],
                v = stats["v", ])
 
-    # TODO LOG
-    # writeLines(kableExtra::kable(result, format = "pipe"), stderr())
-    # writeLines(as.character(as.numeric(Sys.time() - time.in, unit = "secs")), stderr())
-    # writeLines("---", stderr())
-    # 
     result
-  })
+  }
 
 result <- unlist(GRangesList(result))
 result$m <- round(result$m, 3)
@@ -168,7 +169,6 @@ n.bases <- sum(width(g))
 
 cat(sprintf("Completed at %s\nRun time: %.3f sec\ngenes: %.0f \nbases: %.0f\nsec / gene: %.3f\nmsec/base: %.3f", 
             as.character(end.time), run.time, n.genes, n.bases, run.time / n.genes, run.time * 1000 / n.bases))
-
 
 if (!interactive()) {
   print(sessionInfo())
