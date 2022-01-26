@@ -1,0 +1,11 @@
+{
+    "netsq_to_changepoint.CoverageBedgraph_Neg": "${this.bedgraph_neg}",
+    "netsq_to_changepoint.CoverageBedgraph_Pos": "${this.bedgraph_pos}",
+    "netsq_to_changepoint.Cp_algorithm": "CEZINB",
+    "netsq_to_changepoint.GeneTrimLength": "${800}",
+    "netsq_to_changepoint.MaxGenes": "${256}",
+    "netsq_to_changepoint.MaxK": "${8}",
+    "netsq_to_changepoint.ShardCount": "${1}",
+    "netsq_to_changepoint.genelist": "gs://fc-secure-eea6de1f-1832-463e-bf86-820192da1f92/genelist.gff",
+    "netsq_to_changepoint.sampleName": "${this.sample_id}"
+}

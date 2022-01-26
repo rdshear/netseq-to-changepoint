@@ -1,0 +1,3 @@
+{
+    "netsq_to_changepoint.changepoint_segments": "${this.changepoint_segments}"
+}
