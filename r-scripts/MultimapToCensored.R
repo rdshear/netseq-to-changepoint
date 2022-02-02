@@ -4,6 +4,7 @@ library(tidyverse)
 library(Rsamtools)
 library(GenomicAlignments)
 library(rtracklayer)
+library(corrplot)
 
 GRangesToGPos <- function(z) GPos(z, score = rep(z$score, width(z)))
 
@@ -40,6 +41,12 @@ SamToScore <- function(x) {
 }
 
 AddScores <- function(a, b) {
+  if (is.na(a)) {
+    return(b)
+  }
+  if (is.na(b)) {
+    return(a)
+  }
   u <- findOverlaps(a,b)
   x <- a[queryHits(u)]
   g <- gaps(GRanges(x))
@@ -54,52 +61,47 @@ AddScores <- function(a, b) {
 
 jaccard_similarity <- function(a,b) sum(width(GenomicRanges::intersect(a, b))) / sum(width(GenomicRanges::union(a, b)))
 
-f <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/SRR12840066.bam"
-
-reads <- f %>%
-  readGAlignments(f, param=ScanBamParam(tag = c("NH", "HI"), which = GRanges("chrI:1-200000"))) %>%
-  GRanges(.) %>%
-  split(., .$HI) %>% as.list %>%
-  map(SamToScore) 
-
-unique_scores <- reads[[1]]
-dup_list <- reads[2]
-reads <- reads[-1:-2]
-for (r in reads) {
-  dup_list <- base::append(dup_list, AddScores(dup_list[[length(dup_list)]], r))
-}
-names(dup_list) <- paste0("mask_", seq(length(dup_list)))
-  
 gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff")
 
-dup_scores <- dup_list[[length(dup_list)]]
-# For entire genome
-jsim_all <- jaccard_similarity(unique_scores, dup_scores)
+bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
 
-print(glue("Total unique scores = {sum(unique_scores$score)}"))
-print(glue("Total dups scores = {sum(dup_scores$score)}"))
-
-# For regions of interest 
-z <- lapply(list(u = unique_scores, d = dup_scores), function(x) {
-  ov <- findOverlaps(gene_list, x)
-  x[subjectHits(ov)]
-  })
-
-jsim_row <- jaccard_similarity(z[[1]], z[[2]])
-
-print(glue("Jaccard sim (genome) = {round(jsim_all,5)}"))
-print(glue("Jaccard sim (row) = {round(jsim_row,5)}"))
-
-ov <- findOverlaps(z[[1]], z[[2]])
-diffs <- z[[1]][queryHits(ov)]$score -z[[2]][subjectHits(ov)]$score
-u2 <- z[[1]][queryHits(ov)]
-u2$dups_score <- diffs
-# Investigate wide overlaps between unique and dup
-ovx <- GenomicRanges::reduce(GRanges(u2), min.gapwidth = 3)
-ovx_review <- ovx[width(ovx) > 4]
-ovx_review
+f <- tibble(sample_id = paste0("SRR1284006", 6:9),
+       bam_file = paste0(bam_directory, sample_id, ".bam"))
 
 
 
+scores <- f %>% 
+  mutate(gr = map(bam_file, function(f) {
+    readGAlignments(f, param=ScanBamParam(tag = c("NH", "HI"))) %>%
+      GRanges(.) %>%
+      split(., .$HI) %>% as.list %>%
+      map(SamToScore) -> r
+      gmask <- r[-1]
+      for (i in 2:length(gmask)) {
+        gmask[[i]] <- AddScores(gmask[[i - 1]], gmask[[i]])
+      }
+      tibble(signal = list(r[[1]]), tibble(gmask, n_multi = as.integer(names(gmask))))
+    })) %>%
+  unnest(gr)
+
+# check similarity between mask and signal
+scores %>% 
+  mutate(bam_file = NULL, jsim = map2_dbl(signal, gmask, jaccard_similarity)) %>%
+  select(sample_id, n_multi, jsim) ->z
+
+z %>% pivot_wider(names_from = n_multi, values_from = jsim) -> zmat
 
 
+z %>% ggplot(aes(group = n_multi, x = n_multi, y = jsim)) + geom_col() + facet_wrap(vars(sample_id))
+
+scores %>% filter(n_multi == 4) %>% select(sample_id, signal) -> signals
+seq(nrow(signals)) %>% expand.grid(A=., B=.) %>% filter(A < B) %>%
+  mutate(jsim = map2_dbl(A, B, function(a, b) jaccard_similarity(signals$signal[[a]], signals$signal[[b]]))) %>% 
+  rbind(data.frame(A = 1:4, B = 1:4, jsim = 1.0)) -> zcor
+
+n <- nrow(signals)
+z_mat <- matrix(ncol = n, nrow = n)
+z_mat[as.matrix(as.matrix(zcor[,1:2]))] = zcor$jsim
+rownames(z_mat) <- colnames(z_mat) <- signals$sample_id
+corrplot(z_mat, is.corr = FALSE, diag = FALSE, type = "upper", method = "pie")
+z_mat
