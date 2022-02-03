@@ -61,18 +61,19 @@ AddScores <- function(a, b) {
 
 jaccard_similarity <- function(a,b) sum(width(GenomicRanges::intersect(a, b))) / sum(width(GenomicRanges::union(a, b)))
 
-gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff")
+gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff", genome = "sacCer3")
 
+n_genes <- 10
+gene_list <- sort(sample(gene_list, n_genes))
 bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
 
 f <- tibble(sample_id = paste0("SRR1284006", 6:9),
        bam_file = paste0(bam_directory, sample_id, ".bam"))
 
-
-
+f <- f[1,] # TODO
 scores <- f %>% 
-  mutate(gr = map(bam_file, function(f) {
-    readGAlignments(f, param=ScanBamParam(tag = c("NH", "HI"))) %>%
+  mutate(mask_list = map(bam_file, function(bf) {
+    readGAlignments(bf, param=ScanBamParam(tag = c("NH", "HI"), which = gene_list)) %>%
       GRanges(.) %>%
       split(., .$HI) %>% as.list %>%
       map(SamToScore) -> r
@@ -81,8 +82,10 @@ scores <- f %>%
         gmask[[i]] <- AddScores(gmask[[i - 1]], gmask[[i]])
       }
       tibble(signal = list(r[[1]]), tibble(gmask, n_multi = as.integer(names(gmask))))
-    })) %>%
-  unnest(gr)
+    }),
+    bam_file = NULL) %>%
+  unnest(mask_list)
+  
 
 # check similarity between mask and signal
 scores %>% 
