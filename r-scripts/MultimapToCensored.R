@@ -6,6 +6,14 @@ library(Rsamtools)
 library(GenomicAlignments)
 library(rtracklayer)
 library(corrplot)
+library(fitdistrplus)
+
+set.seed(20200101)
+gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff", genome = "sacCer3")
+bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
+f <- tibble(sample_id = paste0("SRR1284006", 6:9),
+            bam_file = paste0(bam_directory, sample_id, ".bam"))
+n_genes <- 20
 
 GRangesToGPos <- function(z) GPos(z, score = rep(z$score, width(z)))
 
@@ -18,6 +26,8 @@ BedgraphToGranges <- function(path, sample) {
   }, list('+', '-'),  paste0(path,sample, ".", c("neg","pos"),".bedgraph.gz"), SIMPLIFY = FALSE)
   x <- GRangesToGPos(sort(c(x[[1]], x[[2]])))
 }
+
+complementStrand <- function(u) c(`+`="-", `-`="+")[as.character(strand(u))]
 
 SamToScore <- function(u) {
   split(u, strand(u))[1:2] %>% as.list %>%
@@ -45,50 +55,88 @@ AddScores <- function(a, b) {
   sort(y)
 }
 
-jaccard_similarity <- function(a,b) sum(width(GenomicRanges::intersect(a, b))) / sum(width(GenomicRanges::union(a, b)))
+jaccard_similarity <- function(a,b) sum(width(GenomicRanges::intersect(a, b))) / 
+  sum(width(GenomicRanges::union(a, b)))
 
-gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff", genome = "sacCer3")
-bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
+ApplyMask <- function(s, m) {
+  s <- scores$gsignal[1][[1]]
+  m <- scores$gmask[1][[1]]
+  
+  msk <- gaps(GRanges(m)) %>% .[strand(.) != "*"]
+  r <- s[subjectHits(findOverlaps(msk, s))]
+  
+  #TODO: add NA's and ZEROS
+  
+}
 
-n_genes <- 100
-gene_list <- sort(sample(gene_list, n_genes))
+if (n_genes > 0) {
+  gene_list <- sort(sample(gene_list, n_genes))
+}
 
-f <- tibble(sample_id = paste0("SRR1284006", 6:9),
-       bam_file = paste0(bam_directory, sample_id, ".bam"))
+# This is a 'rough' filter. Gets rid of anti-sense reads and reads far away from target gene
+# Just for efficiency. There is no provision for strand-aware filtering in readGAlignments
+bam_read_mask <- gene_list
+strand(bam_read_mask) <- "*"
+bam_read_mask <- GenomicRanges::reduce(bam_read_mask)
 
-scores <- f %>%
-  mutate(gmask = map(bam_file, function(u)
-    readGAlignments(u, param=
-                ScanBamParam(tag = c("NH", "HI"), which = GRanges("chrI:1-50000"))))) %>%
-  mutate(gmask = map(gmask, GRanges)) %>%
-  mutate(gmask = map(gmask, GenomicRanges::resize, width = 1, fix = "start")) %>%
-  mutate(gmask = map(gmask, function(u) 
-        u[subjectHits(findOverlaps(gene_list, u))]), 
-    gmask = map(gmask, function(u) as.list(split(u, u$HI))),
-    gmask = map(gmask, function(u) map(u,SamToScore)),
-    gsignal = map(gmask, function(u) u[[1]]),
-    gmask = map(gmask, function(u) {
-      Tot <<- GRanges()
-      r <- map(u[-1], function(w) {
-        Tot <<- AddScores(w, Tot)
-        Tot
-      })
-      tibble(n_multi = as.integer(names(r)), gmask = r)
+reads <- f %>%
+  # The reads are from cDNA, therefore the 5'-end is the 3'-end of the nascent RNA
+  # which is the last base exposed from the elongation complex.
+  # THerefore, we will declare the occupancy to be the 5'-end. And we will
+  # swap the strand information when we actually du=o the counts.
+  mutate(bamreads = map(bam_file, function(u) {
+    x <- GRanges(readGAlignments(u, param=
+                ScanBamParam(tag = c("NH", "HI"),
+                  what = c("qname", "cigar", "qwidth"), which = bam_read_mask)))
+    glst <- gene_list
+    strand(glst) <- complementStrand(glst)
+    x <- x[subjectHits(findOverlaps(glst, x))]
+    x$cigstart <- explodeCigarOps(x$cigar) %>% 
+      map(paste0, collapse="") %>% 
+      unlist %>%  
+      stringi::stri_sub(., if_else(as.character(strand(x)) == "+", 1, -1), length = 1)
+    x
+    }))
+
+scores <- reads %>%
+  mutate(gmask = map(bamreads, 
+                     GenomicRanges::resize, width = 1, fix = "start")) %>%
+  mutate(gmask = map(gmask, function(u) {
+        strand(u) <- complementStrand(u)
+        u[subjectHits(findOverlaps(gene_list, u))]
+        u
+      })) %>% 
+  # TODO ANALYZE cigar strings
+  # TODO Report cigar Skip losses
+  mutate(gmask = map(gmask, function(u) u[u$cigstart == "M"])) %>%
+  mutate(gmask = map(gmask, function(u) as.list(split(u, u$HI))),
+    gmask = map(gmask, function(u) map(u,SamToScore))) %>%
+  mutate(gsignal = map(gmask, function(u) u[[1]])) %>%
+  # TODO Outer join on depth (HI)
+  mutate(gmask = map(gmask, function(u) {
+      Tot <- GRanges()
+      r <- list()
+      for (w in u[-1])  {
+        Tot <- AddScores(w, Tot)
+        r <- append(r, list(Tot))
+      }
+      tibble(n_multi = names(u[-1]),gmask = r)
     })
-  ) %>%
-  unnest(gmask)
+  )
 
 # check similarity between mask and gsignal
-scores %>% 
+scores %>%
+  unnest(gmask)%>% 
   mutate(bam_file = NULL, jsim = map2_dbl(gsignal, gmask, jaccard_similarity)) %>%
-  select(sample_id, n_multi, jsim) ->z
+  dplyr::select(sample_id, n_multi, jsim) -> z
 
 z %>% pivot_wider(names_from = n_multi, values_from = jsim) -> zmat
 
 
 z %>% ggplot(aes(group = n_multi, x = n_multi, y = jsim)) + geom_col() + facet_wrap(vars(sample_id))
 
-scores %>% filter(n_multi == 4) %>% select(sample_id, gsignal) -> signals
+scores %>%
+  unnest(gmask)%>% filter(n_multi == 4) %>% dplyr::select(sample_id, gsignal) -> signals
 seq(nrow(signals)) %>% expand.grid(A=., B=.) %>% filter(A < B) %>%
   mutate(jsim = map2_dbl(A, B, function(a, b) jaccard_similarity(signals$gsignal[[a]], signals$gsignal[[b]]))) %>% 
   rbind(data.frame(A = 1:4, B = 1:4, jsim = 1.0)) -> zcor
