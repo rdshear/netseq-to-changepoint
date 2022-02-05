@@ -48,9 +48,10 @@ AddScores <- function(a, b) {
 jaccard_similarity <- function(a,b) sum(width(GenomicRanges::intersect(a, b))) / sum(width(GenomicRanges::union(a, b)))
 
 gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff", genome = "sacCer3")
-n_genes <- 10
-gene_list <- sort(sample(gene_list, n_genes))
 bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
+
+n_genes <- 100
+gene_list <- sort(sample(gene_list, n_genes))
 
 f <- tibble(sample_id = paste0("SRR1284006", 6:9),
        bam_file = paste0(bam_directory, sample_id, ".bam"))
@@ -58,7 +59,7 @@ f <- tibble(sample_id = paste0("SRR1284006", 6:9),
 scores <- f %>%
   mutate(gmask = map(bam_file, function(u)
     readGAlignments(u, param=
-                ScanBamParam(tag = c("NH", "HI"))))) %>%
+                ScanBamParam(tag = c("NH", "HI"), which = GRanges("chrI:1-50000"))))) %>%
   mutate(gmask = map(gmask, GRanges)) %>%
   mutate(gmask = map(gmask, GenomicRanges::resize, width = 1, fix = "start")) %>%
   mutate(gmask = map(gmask, function(u) 
@@ -68,13 +69,18 @@ scores <- f %>%
     gsignal = map(gmask, function(u) u[[1]]),
     gmask = map(gmask, function(u) {
       Tot <<- GRanges()
-      map(u[-1], function(w) Tot <<- AddScores(w, Tot))
+      r <- map(u[-1], function(w) {
+        Tot <<- AddScores(w, Tot)
+        Tot
+      })
+      tibble(n_multi = as.integer(names(r)), gmask = r)
     })
-  )
+  ) %>%
+  unnest(gmask)
 
-# check similarity between mask and osignal
+# check similarity between mask and gsignal
 scores %>% 
-  mutate(bam_file = NULL, jsim = map2_dbl(osignal, gmask, jaccard_similarity)) %>%
+  mutate(bam_file = NULL, jsim = map2_dbl(gsignal, gmask, jaccard_similarity)) %>%
   select(sample_id, n_multi, jsim) ->z
 
 z %>% pivot_wider(names_from = n_multi, values_from = jsim) -> zmat
@@ -82,9 +88,9 @@ z %>% pivot_wider(names_from = n_multi, values_from = jsim) -> zmat
 
 z %>% ggplot(aes(group = n_multi, x = n_multi, y = jsim)) + geom_col() + facet_wrap(vars(sample_id))
 
-scores %>% filter(n_multi == 4) %>% select(sample_id, osignal) -> signals
+scores %>% filter(n_multi == 4) %>% select(sample_id, gsignal) -> signals
 seq(nrow(signals)) %>% expand.grid(A=., B=.) %>% filter(A < B) %>%
-  mutate(jsim = map2_dbl(A, B, function(a, b) jaccard_similarity(signals$osignal[[a]], signals$osignal[[b]]))) %>% 
+  mutate(jsim = map2_dbl(A, B, function(a, b) jaccard_similarity(signals$gsignal[[a]], signals$gsignal[[b]]))) %>% 
   rbind(data.frame(A = 1:4, B = 1:4, jsim = 1.0)) -> zcor
 
 n <- nrow(signals)
