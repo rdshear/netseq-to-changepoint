@@ -10,10 +10,13 @@ library(fitdistrplus)
 
 set.seed(20200101)
 gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff", genome = "sacCer3")
+names(gene_list) <- gene_list$ID
 bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
 f <- tibble(sample_id = paste0("SRR1284006", 6:9),
             bam_file = paste0(bam_directory, sample_id, ".bam"))
-n_genes <- 100
+n_genes <- 20
+
+OverlappedRanges <- function(q, s) s[subjectHits(findOverlaps(q, s))]
 
 GRangesToGPos <- function(z) GPos(z, score = rep(z$score, width(z)))
 
@@ -47,8 +50,12 @@ AddScores <- function(a, b) {
   x <- a[queryHits(u)]
   g <- gaps(GRanges(x))
   g <- g[strand(g) != "*"]
-  v <- a[subjectHits(GenomicRanges::findOverlaps(g, a))]
-  w <- b[subjectHits(findOverlaps(g, b))]
+  OverlappedRanges
+  v1 <- a[subjectHits(GenomicRanges::findOverlaps(g, a))]
+  v <- OverlappedRanges(g, a)
+  w1 <- b[subjectHits(findOverlaps(g, b))]
+  w <- OverlappedRanges(g, b)
+  browser()
   
   x$score <- x$score + b[subjectHits(u)]$score
   y <- c(x, v, w)
@@ -63,8 +70,9 @@ ApplyMask <- function(s, m) {
   m <- scores$gmask[1][[1]]
   
   msk <- gaps(GRanges(m)) %>% .[strand(.) != "*"]
-  r <- s[subjectHits(findOverlaps(msk, s))]
-  
+  r1 <- s[subjectHits(findOverlaps(msk, s))]
+  r <- OverlappedRanges(msk, s)
+  browser()
   #TODO: add NA's and ZEROS
   
 }
@@ -79,87 +87,80 @@ bam_read_mask <- gene_list
 strand(bam_read_mask) <- "*"
 bam_read_mask <- GenomicRanges::reduce(bam_read_mask)
 
-reads <- f %>%
   # The reads are from cDNA, therefore the 5'-end is the 3'-end of the nascent RNA
   # which is the last base exposed from the elongation complex.
   # THerefore, we will declare the occupancy to be the 5'-end. And we will
   # swap the strand information when we actually du=o the counts.
+scores <- f  %>%
   mutate(bamreads = map(bam_file, function(u) {
-    x <- GRanges(readGAlignments(u, param=
+    u <- GRanges(readGAlignments(u, param=
                 ScanBamParam(tag = c("NH", "HI"),
                   what = c("qname", "cigar", "qwidth"), which = bam_read_mask)), 
               seqinfo = seqinfo(gene_list))
     glst <- gene_list
     strand(glst) <- complementStrand(glst)
-    x <- x[subjectHits(findOverlaps(glst, x))]
-    x$cigstart <- explodeCigarOps(x$cigar) %>% 
+    u <- OverlappedRanges(glst, u)
+    u$cigstart <- explodeCigarOps(u$cigar) %>% 
       map(paste0, collapse="") %>% 
-      unlist %>%  
-      stringi::stri_sub(., if_else(as.character(strand(x)) == "+", 1, -1), length = 1)
-    x
-    }))
-
-
-# convert to occupancy table
-scores <- reads %>%
-  mutate(bamreads = map(bamreads, 
-                     GenomicRanges::resize, width = 1, fix = "start")) %>%
-  mutate(bamreads = map(bamreads, function(u) u[u$cigstart == "M"])) %>%
-  mutate(bamreads = map(bamreads, function(u) {
+      unlist %>%
+      stringi::stri_sub(., if_else(as.character(strand(u)) == "+", 1, -1), length = 1)
+    u <- u[u$cigstart == "M"]
     strand(u) <- complementStrand(u)
-    u
-  })) %>% 
-  mutate(bamreads = map(bamreads, function(u) {
-    u[subjectHits(findOverlaps(gene_list, u))]
+    u <- split(u, u$HI)
+    tibble(n_multi = as.integer(names(u)), gmask = as.list(u))
   })) %>%
-  mutate(gmask = map(bamreads, function(u) as.list(split(u, u$HI))),
-    gmask = map(gmask, function(u) map(u,SamToScore))) %>%
-  mutate(gsignal = map(gmask, function(u) u[[1]])) %>%
-  # TODO Outer join on depth (HI)
-  mutate(gmask = map(gmask, function(u) {
-      Tot <- GRanges()
-      r <- list()
-      for (w in u[-1])  {
-        Tot <- AddScores(w, Tot)
-        r <- append(r, list(Tot))
-      }
-      tibble(n_multi = names(u[-1]),gmask = r)
-    })
-  ) %>%
+  mutate(gsignal = map(bamreads, function(u) {
+      GenomicRanges::resize(u$gmask[[1]], width = 1, fix = "end")  %>%
+      sort
+    })) %>%
+  mutate(gsignal = map(gsignal, function(u) 
+    SamToScore(OverlappedRanges(gene_list, u)))) %>% 
+  mutate(gmask = map(bamreads, function(masktab) {
+    cum <- GRanges(seqinfo = seqinfo(masktab$gmask[[1]]))
+    result <- list()
+    masktab <- masktab[-1, ]
+    for (i in masktab$gmask) {
+      cum <- OverlappedRanges(gene_list, c(cum, i))
+      result <- append(result, list(cum))
+    }
+    masktab$gmask <- result
+    masktab
+  }))
 
+# mask x sample
+scores %>% 
+  unnest(gmask) %>%
+  dplyr::filter(n_multi == 4) -> w
+
+jaccard_similarity(w$gmask[[1]], w$gmask[[4]])
 # check similarity between mask and gsignal
 
-# TODO Construct the appropriate censor mask
 
-  mutate(roi_reads = map(bamreads, function(u)
-         (function(v) split(u[subjectHits(v)], 
-                  gene_list$ID[queryHits(v)]))(findOverlaps(gene_list, u)))) %>%
-  mutate(roi_score = map(gsignal, function(u)
-    (function(v) split(SamToScore(u[subjectHits(v)]), 
-                       gene_list$ID[queryHits(v)]))(findOverlaps(gene_list, u))))
+
+# TODO Construct the appropriate censor mask
   
 scores %>%
   unnest(gmask) %>% 
   mutate(jsim = map2_dbl(gsignal, gmask, jaccard_similarity),
         npos_signal = map_int(gsignal, length), 
         npos_mask =  map_int(gmask, length), 
-        mean_signal = map_dbl(gsignal, function(u) mean(u$score)), 
-        mean_mask = map_dbl(gmask, function(u) mean(u$score))) %>%
-  dplyr::select(!(bam_file:bamreads)) %>% dplyr::select(!(gmask:gsignal)) -> z
-
-z %>% pivot_wider(names_from = n_multi, values_from = c(jsim)) -> zmat
-
+        mean_signal = map_dbl(gsignal, function(u) mean(u$score))) %>%
+  dplyr::select(!(bam_file:gsignal)) %>%
+  dplyr::select(!gmask) -> z
 
 z %>% ggplot(aes(group = n_multi, x = n_multi, y = jsim)) +
   geom_col() + facet_wrap(vars(sample_id))
 
 scores %>%
-  unnest(gmask)%>% filter(n_multi == 4) %>% dplyr::select(sample_id, gsignal) -> signals
+  unnest(gmask)%>% filter(n_multi == 4) %>% dplyr::select(sample_id, gmask) -> signals
 seq(nrow(signals)) %>% expand.grid(A=., B=.) %>% filter(A < B) %>%
   mutate(jsim = map2_dbl(A, B, function(a, b) 
-    jaccard_similarity(signals$gsignal[[a]], signals$gsignal[[b]]))) %>% 
+    jaccard_similarity(signals$gmask[[a]], signals$gmask[[b]]))) %>%
   rbind(data.frame(A = 1:4, B = 1:4, jsim = 1.0)) -> zcor
 
+pivot_wider(zcor, names_from = B, values_from = jsim)
+# TODO: Exclude wt-4?
+# TODO: look at mask jitter?
 n <- nrow(signals)
 z_mat <- matrix(ncol = n, nrow = n)
 z_mat[as.matrix(as.matrix(zcor[,1:2]))] = zcor$jsim
