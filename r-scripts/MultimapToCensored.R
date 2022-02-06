@@ -13,7 +13,7 @@ gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/
 bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
 f <- tibble(sample_id = paste0("SRR1284006", 6:9),
             bam_file = paste0(bam_directory, sample_id, ".bam"))
-n_genes <- 20
+n_genes <- 100
 
 GRangesToGPos <- function(z) GPos(z, score = rep(z$score, width(z)))
 
@@ -87,7 +87,8 @@ reads <- f %>%
   mutate(bamreads = map(bam_file, function(u) {
     x <- GRanges(readGAlignments(u, param=
                 ScanBamParam(tag = c("NH", "HI"),
-                  what = c("qname", "cigar", "qwidth"), which = bam_read_mask)))
+                  what = c("qname", "cigar", "qwidth"), which = bam_read_mask)), 
+              seqinfo = seqinfo(gene_list))
     glst <- gene_list
     strand(glst) <- complementStrand(glst)
     x <- x[subjectHits(findOverlaps(glst, x))]
@@ -98,18 +99,20 @@ reads <- f %>%
     x
     }))
 
+
+# convert to occupancy table
 scores <- reads %>%
-  mutate(gmask = map(bamreads, 
+  mutate(bamreads = map(bamreads, 
                      GenomicRanges::resize, width = 1, fix = "start")) %>%
-  mutate(gmask = map(gmask, function(u) {
-        strand(u) <- complementStrand(u)
-        u[subjectHits(findOverlaps(gene_list, u))]
-        u
-      })) %>% 
-  # TODO ANALYZE cigar strings
-  # TODO Report cigar Skip losses
-  mutate(gmask = map(gmask, function(u) u[u$cigstart == "M"])) %>%
-  mutate(gmask = map(gmask, function(u) as.list(split(u, u$HI))),
+  mutate(bamreads = map(bamreads, function(u) u[u$cigstart == "M"])) %>%
+  mutate(bamreads = map(bamreads, function(u) {
+    strand(u) <- complementStrand(u)
+    u
+  })) %>% 
+  mutate(bamreads = map(bamreads, function(u) {
+    u[subjectHits(findOverlaps(gene_list, u))]
+  })) %>%
+  mutate(gmask = map(bamreads, function(u) as.list(split(u, u$HI))),
     gmask = map(gmask, function(u) map(u,SamToScore))) %>%
   mutate(gsignal = map(gmask, function(u) u[[1]])) %>%
   # TODO Outer join on depth (HI)
@@ -122,23 +125,39 @@ scores <- reads %>%
       }
       tibble(n_multi = names(u[-1]),gmask = r)
     })
-  )
+  ) %>%
 
 # check similarity between mask and gsignal
+
+# TODO Construct the appropriate censor mask
+
+  mutate(roi_reads = map(bamreads, function(u)
+         (function(v) split(u[subjectHits(v)], 
+                  gene_list$ID[queryHits(v)]))(findOverlaps(gene_list, u)))) %>%
+  mutate(roi_score = map(gsignal, function(u)
+    (function(v) split(SamToScore(u[subjectHits(v)]), 
+                       gene_list$ID[queryHits(v)]))(findOverlaps(gene_list, u))))
+  
 scores %>%
-  unnest(gmask)%>% 
-  mutate(bam_file = NULL, jsim = map2_dbl(gsignal, gmask, jaccard_similarity)) %>%
-  dplyr::select(sample_id, n_multi, jsim) -> z
+  unnest(gmask) %>% 
+  mutate(jsim = map2_dbl(gsignal, gmask, jaccard_similarity),
+        npos_signal = map_int(gsignal, length), 
+        npos_mask =  map_int(gmask, length), 
+        mean_signal = map_dbl(gsignal, function(u) mean(u$score)), 
+        mean_mask = map_dbl(gmask, function(u) mean(u$score))) %>%
+  dplyr::select(!(bam_file:bamreads)) %>% dplyr::select(!(gmask:gsignal)) -> z
 
-z %>% pivot_wider(names_from = n_multi, values_from = jsim) -> zmat
+z %>% pivot_wider(names_from = n_multi, values_from = c(jsim)) -> zmat
 
 
-z %>% ggplot(aes(group = n_multi, x = n_multi, y = jsim)) + geom_col() + facet_wrap(vars(sample_id))
+z %>% ggplot(aes(group = n_multi, x = n_multi, y = jsim)) +
+  geom_col() + facet_wrap(vars(sample_id))
 
 scores %>%
   unnest(gmask)%>% filter(n_multi == 4) %>% dplyr::select(sample_id, gsignal) -> signals
 seq(nrow(signals)) %>% expand.grid(A=., B=.) %>% filter(A < B) %>%
-  mutate(jsim = map2_dbl(A, B, function(a, b) jaccard_similarity(signals$gsignal[[a]], signals$gsignal[[b]]))) %>% 
+  mutate(jsim = map2_dbl(A, B, function(a, b) 
+    jaccard_similarity(signals$gsignal[[a]], signals$gsignal[[b]]))) %>% 
   rbind(data.frame(A = 1:4, B = 1:4, jsim = 1.0)) -> zcor
 
 n <- nrow(signals)
