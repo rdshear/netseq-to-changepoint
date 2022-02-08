@@ -12,9 +12,9 @@ print(glue("Start time = {Sys.time()}"))
 start_time <- proc.time()
 set.seed(20200101)
 gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff", genome = "sacCer3")
-names(gene_list) <- gene_list$ID
-#  remove overlapping genes 
-# TODO move to ene_list preperation
+n_genes <- 20
+
+names(gene_list) <- gene_list$ID 
 
 z <- disjoin(gene_list, with.revmap = TRUE, ignore.strand = FALSE)$revmap
 w <- unique(unlist(z[which(sapply(z, function(u) length(u) > 1))]))
@@ -22,10 +22,15 @@ if (length(w) > 0) {
   gene_list <- gene_list[-w]
 }
 
+if (n_genes > 0 && n_genes < length(gene_list)) {
+  gene_list <- sample(gene_list, n_genes)
+  }
+
+gene_list <- GenomicRanges::sort(gene_list)
+
 bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
 f <- tibble(sample_id = paste0("SRR1284006", 6:9),
             bam_file = paste0(bam_directory, sample_id, ".bam"))
-n_genes <- 500
 
 IncludedRanges <- function(q, s) {
   x <- c(q, s)
@@ -101,7 +106,6 @@ bam_read_mask <- GenomicRanges::reduce(bam_read_mask)
   # which is the last base exposed from the elongation complex.
   # THerefore, we will declare the occupancy to be the 5'-end. And we will
   # swap the strand information when we actually du=o the counts.
-# TODO DEBUG ONLY
 scores <- f  %>%
   mutate(bamreads = map(bam_file, function(u) {
     u <- GRanges(readGAlignments(u, param=
@@ -175,10 +179,35 @@ scores %>%
 ) %>%
   transmute(sample_id, mask_losses) %>%
   unnest(mask_losses) %>%
-  filter(base_loss > 0) -> x
+  arrange(base_loss, sample_id)-> mask_coverage_summary
 
-ggplot(x, aes(x = base_loss)) + geom_histogram()
+mask_coverage_summary %>%
+  kableExtra::kable(format = "pipe")
 
+mask_coverage_summary %>%
+filter(base_loss > 0) %>%
+ggplot(aes(x = base_loss)) + geom_histogram()
+
+s <- mask_coverage_summary$sample_id[1]
+g <- mask_coverage_summary$gene_id[1]
+scores %>% 
+  filter(sample_id == s) -> target
+sq <- target$g_scores[[1]][g] %>% as.list %>% unlist %>% .[[1]]
+gn <- gene_list[g]
+# quick & dirty for testing only
+x <- GPos(gn)
+x$score <- 0
+y <- AddScores(x, sq)
+z <- y$score
+plot(z)
+library(changepoint.np)
+a <- cpt.np(z)
+
+library(HresSE)
+qq <- readRDS("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S004/hresse/HresSE_screen.rds")
+b <- assay(qq, "cp")[g, 1][[1]]
+cumsum(width(b))
+width(gn)
 # scores %>%
 #   unnest(gmask) %>% 
 #   mutate(jsim = map2_dbl(gsignal, gmask, jaccard_similarity),
