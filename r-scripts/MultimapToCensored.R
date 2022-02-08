@@ -8,13 +8,31 @@ library(rtracklayer)
 library(corrplot)
 library(fitdistrplus)
 
+print(glue("Start time = {Sys.time()}"))
+start_time <- proc.time()
 set.seed(20200101)
 gene_list <- import("/Users/robertshear/Documents/n/groups/churchman/rds19/data/S005/genelist.gff", genome = "sacCer3")
 names(gene_list) <- gene_list$ID
+#  remove overlapping genes 
+# TODO move to ene_list preperation
+
+z <- disjoin(gene_list, with.revmap = TRUE, ignore.strand = FALSE)$revmap
+w <- unique(unlist(z[which(sapply(z, function(u) length(u) > 1))]))
+if (length(w) > 0) {
+  gene_list <- gene_list[-w]
+}
+
 bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
 f <- tibble(sample_id = paste0("SRR1284006", 6:9),
             bam_file = paste0(bam_directory, sample_id, ".bam"))
-n_genes <- 20
+n_genes <- 500
+
+IncludedRanges <- function(q, s) {
+  x <- c(q, s)
+  y <- disjoin(x, with.revmap = TRUE, ignore.strand = FALSE)
+  s1 <- y[unique(which((sapply(as.vector(y$revmap), max) > length(q))))]
+  OverlappedRanges(q, s1)
+}
 
 OverlappedRanges <- function(q, s) s[subjectHits(findOverlaps(q, s))]
 
@@ -55,8 +73,6 @@ AddScores <- function(a, b) {
   v <- OverlappedRanges(g, a)
   w1 <- b[subjectHits(findOverlaps(g, b))]
   w <- OverlappedRanges(g, b)
-  browser()
-  
   x$score <- x$score + b[subjectHits(u)]$score
   y <- c(x, v, w)
   sort(y)
@@ -72,13 +88,7 @@ ApplyMask <- function(s, m) {
   msk <- gaps(GRanges(m)) %>% .[strand(.) != "*"]
   r1 <- s[subjectHits(findOverlaps(msk, s))]
   r <- OverlappedRanges(msk, s)
-  browser()
   #TODO: add NA's and ZEROS
-  
-}
-
-if (n_genes > 0) {
-  gene_list <- sort(sample(gene_list, n_genes))
 }
 
 # This is a 'rough' filter. Gets rid of anti-sense reads and reads far away from target gene
@@ -91,6 +101,7 @@ bam_read_mask <- GenomicRanges::reduce(bam_read_mask)
   # which is the last base exposed from the elongation complex.
   # THerefore, we will declare the occupancy to be the 5'-end. And we will
   # swap the strand information when we actually du=o the counts.
+# TODO DEBUG ONLY
 scores <- f  %>%
   mutate(bamreads = map(bam_file, function(u) {
     u <- GRanges(readGAlignments(u, param=
@@ -120,50 +131,79 @@ scores <- f  %>%
     result <- list()
     masktab <- masktab[-1, ]
     for (i in masktab$gmask) {
-      cum <- OverlappedRanges(gene_list, c(cum, i))
+      cum <- GenomicRanges::reduce(OverlappedRanges(gene_list, c(cum, i)))
       result <- append(result, list(cum))
     }
     masktab$gmask <- result
     masktab
+  })) %>%
+  mutate(topmask = map(gmask, function(u) u$gmask[which.max(u$n_multi)][[1]]))  %>%
+  mutate(g_scores = map2(gsignal, topmask, function(s, m){
+    masked_scores <- OverlappedRanges(gaps(m) %>% 
+        .[as.character(strand(.)) != "*"], s)
+    ov <- findOverlaps(gene_list, masked_scores)
+    result <- split(masked_scores[subjectHits(ov)], names(gene_list)[queryHits(ov)])
   }))
+  # calculate mask losses per gene
 
-# mask x sample
-scores %>% 
-  unnest(gmask) %>%
-  dplyr::filter(n_multi == 4) -> w
 
-jaccard_similarity(w$gmask[[1]], w$gmask[[4]])
+export(scores$g_scores[[1]] %>% unlist, "~/Downloads/tmp.bedgraph", format = "bedGraph", index = TRUE)
+export(gene_list, "~/Downloads/genes_20.gff3", format = "gff3", index = TRUE)
+export(scores$topmask[[1]], "~/Downloads/tmp_mask.gff3", format = "gff3", index = TRUE)
+
 # check similarity between mask and gsignal
 
+# TODO parameterize save location
+#saveRDS(scores, "~/Downloads/MultimapToCensored.rds")
 
-
-# TODO Construct the appropriate censor mask
-  
-scores %>%
-  unnest(gmask) %>% 
-  mutate(jsim = map2_dbl(gsignal, gmask, jaccard_similarity),
-        npos_signal = map_int(gsignal, length), 
-        npos_mask =  map_int(gmask, length), 
-        mean_signal = map_dbl(gsignal, function(u) mean(u$score))) %>%
-  dplyr::select(!(bam_file:gsignal)) %>%
-  dplyr::select(!gmask) -> z
-
-z %>% ggplot(aes(group = n_multi, x = n_multi, y = jsim)) +
-  geom_col() + facet_wrap(vars(sample_id))
+elapsed <-  proc.time() - start_time
+print("elapsed time")
+print(elapsed)
+print(glue("time / gene  (n = {n_genes})"))
+print(elapsed / n_genes)
 
 scores %>%
-  unnest(gmask)%>% filter(n_multi == 4) %>% dplyr::select(sample_id, gmask) -> signals
-seq(nrow(signals)) %>% expand.grid(A=., B=.) %>% filter(A < B) %>%
-  mutate(jsim = map2_dbl(A, B, function(a, b) 
-    jaccard_similarity(signals$gmask[[a]], signals$gmask[[b]]))) %>%
-  rbind(data.frame(A = 1:4, B = 1:4, jsim = 1.0)) -> zcor
+  mutate(mask_losses = map(topmask, function(u) {
+  u <-  IncludedRanges(gene_list, u)
+  ov <-  findOverlaps(gene_list, u)
+  s <- split(u[subjectHits(ov)], names(gene_list[queryHits(ov)]))
+  u <- rbind(tibble(gene_id = names(s), mask_width = sum(width(s)), mask_segments = sapply(s, length), gene_width = width(gene_list[names(s)])),
+             setdiff(names(gene_list), names(s)) %>% tibble(gene_id = ., mask_width = 0, mask_segments = 0,  gene_width = width(gene_list[.])))
+  u$base_loss = u$mask_width / u$gene_width
+  u
+  })
+) %>%
+  transmute(sample_id, mask_losses) %>%
+  unnest(mask_losses) %>%
+  filter(base_loss > 0) -> x
 
-pivot_wider(zcor, names_from = B, values_from = jsim)
-# TODO: Exclude wt-4?
-# TODO: look at mask jitter?
-n <- nrow(signals)
-z_mat <- matrix(ncol = n, nrow = n)
-z_mat[as.matrix(as.matrix(zcor[,1:2]))] = zcor$jsim
-rownames(z_mat) <- colnames(z_mat) <- signals$sample_id
-corrplot(z_mat, is.corr = FALSE, diag = FALSE, type = "upper", method = "pie")
-z_mat
+ggplot(x, aes(x = base_loss)) + geom_histogram()
+
+# scores %>%
+#   unnest(gmask) %>% 
+#   mutate(jsim = map2_dbl(gsignal, gmask, jaccard_similarity),
+#         npos_signal = map_int(gsignal, length), 
+#         npos_mask =  map_int(gmask, length), 
+#         mean_signal = map_dbl(gsignal, function(u) mean(u$score))) %>%
+#   dplyr::select(!(bam_file:gsignal)) %>%
+#   dplyr::select(!gmask) -> z
+# 
+# z %>% ggplot(aes(group = n_multi, x = n_multi, y = jsim)) +
+#   geom_col() + facet_wrap(vars(sample_id))
+# 
+# scores %>%
+#   unnest(gmask)%>% filter(n_multi == 4) %>% dplyr::select(sample_id, gmask) -> signals
+# seq(nrow(signals)) %>% expand.grid(A=., B=.) %>% filter(A < B) %>%
+#   mutate(jsim = map2_dbl(A, B, function(a, b)
+#     jaccard_similarity(signals$gmask[[a]], signals$gmask[[b]]))) %>%
+#   rbind(data.frame(A = 1:4, B = 1:4, jsim = 1.0)) -> zcor
+# 
+# pivot_wider(zcor, names_from = B, values_from = jsim)
+# # TODO: Exclude wt-4?
+# # TODO: look at mask jitter?
+# n <- nrow(signals)
+# z_mat <- matrix(ncol = n, nrow = n)
+# z_mat[as.matrix(as.matrix(zcor[,1:2]))] = zcor$jsim
+# rownames(z_mat) <- colnames(z_mat) <- signals$sample_id
+# corrplot(z_mat, is.corr = FALSE, diag = FALSE, type = "upper", method = "pie")
+# z_mat
