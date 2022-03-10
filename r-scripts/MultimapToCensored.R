@@ -28,9 +28,10 @@ if (n_genes > 0 && n_genes < length(gene_list)) {
 
 gene_list <- GenomicRanges::sort(gene_list)
 
-bam_directory <- "/n/groups/churchman/rds19/data/S005/mm-to-censor/"
+bam_directory <- "/n/groups/churchman/rds19/data/S006/"
 f <- tibble(sample_id = paste0("SRR1284006", 6:9),
             bam_file = paste0(bam_directory, sample_id, ".bam"))
+n_genes <- 0
 
 IncludedRanges <- function(q, s) {
   x <- c(q, s)
