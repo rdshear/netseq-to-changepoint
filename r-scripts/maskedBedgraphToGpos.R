@@ -4,7 +4,7 @@ library(tidyverse)
 library(breakpoint)
 
 matrix_apply <- function(x, f, ...) {
-  result <- lapply(x, f, ...)
+  result <- sapply(x, f, ...)
   dim(result) <- dim(x)
   dimnames(result) <- dimnames(x)
   result
@@ -28,19 +28,21 @@ mask_pos <- list.files(file.path(data_root),
 mask_neg <- list.files(file.path(data_root),
                        pattern = "*[.]mask_neg[.]bedgraph[.]gz$", full.names = TRUE)
 
+sample_ids <- basename(sapply(strsplit(begraphpos_fnames, ".", fixed = TRUE), function(u) u[1]))
 
-nsd <- NETseqDataFromBedgraph(basename(begraphpos_fnames),
+nsd <- NETseqDataFromBedgraph(sample_ids,
                             begraphpos_fnames, begraphneg_fnames,
                             seqinfo = seqinfo(which))
 
-# HACK one entry only
+# TODO need "which" parameter for GPosExperiment
 # TODO add masks to the constructor
-m1 <- import(mask_pos)
-m2 <- import(mask_neg)
-strand(m1) <- "+"
-strand(m2) <- "-"
-mask(nsd[[1]]) <- sort(c(m1, m2))
-
+for (i in seq_along(nsd)) {
+  m1 <- import(mask_pos[i])
+  m2 <- import(mask_neg[i])
+  strand(m1) <- "+"
+  strand(m2) <- "-"
+  mask(nsd[[i]]) <- sort(c(m1, m2))
+}
 e <- GPosExperiment(nsd, rowRanges = which)
 s <- scores(e, apply_mask = TRUE, zero_fill = TRUE)
 n_mask <- matrix_apply(s, function(u) sum(is.na(u$score)))
@@ -79,8 +81,9 @@ assay(e, "bpts") <- bpts
 assay(e, "k") <- matrix_apply(bpts, length)
 
 rds_filename <- file.path(data_root, "GPosExp-Uzun.rds")
-#saveRDS(e, rds_filename)
-e <- readRDS(rds_filename)
+saveRDS(e, rds_filename)
+
+
 bp <- assay(e, "bpts")
 
 par(mfcol = c(ncol(e),nrow(e)), mar = c(2, 2, 1, 1) + 0.1)
@@ -93,6 +96,8 @@ for (i in 1:nrow(e))
     v <- bp[i,j][[1]]
     abline(v = v, col = "blue")
   }
+
+#e <- readRDS(rds_filename)
 
 # result <- matrix_apply(s, calc_cp)
 
