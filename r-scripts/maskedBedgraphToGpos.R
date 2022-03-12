@@ -3,6 +3,8 @@ library(GPosExperiment)
 library(tidyverse)
 library(breakpoint)
 
+set.seed(20220311)
+
 matrix_apply <- function(x, f, ...) {
   result <- sapply(x, f, ...)
   dim(result) <- dim(x)
@@ -11,11 +13,17 @@ matrix_apply <- function(x, f, ...) {
 }
 
 data_root <- "/n/groups/churchman/rds19/data/S006"
+# rds_filename <- file.path(data_root, "GPosExp-Uzun.rds")
+rds_filename <- file.path(data_root, "GPosExp-100Rand.rds")
+n_genes <- 100
 
 which <- import(file.path(data_root, "genelist.gff"), genome = "sacCer3")
 names(which) <- which$ID
-gx <- c("YDR152W", "YDR311W", "YDR381W") # examples  (Uzun et al. 2021)
-which <- which[gx]
+
+# gx <- c("YDR152W", "YDR311W", "YDR381W") # examples  (Uzun et al. 2021)
+# which <- which[gx]
+n_genes <- 100
+which <- sort(sample(which, n_genes))
 
 begraphpos_fnames <- list.files(file.path(data_root),
                          pattern = "*[.]pos[.]bedgraph[.]gz$", full.names = TRUE)
@@ -60,29 +68,44 @@ n_s
 # abline(v = pos(subject[s_na_idx]), col = "red")
 
 library(breakpoint)
-Kmax <- 7
+Kmax <- 10
 
 calc_cp <- function(subject) {
+  trace <<- trace + 1
+  print(trace)
   s_na_idx <- which(is.na(subject$score))
   if (length(s_na_idx) == 0) {
     subject_censored <- subject
   } else {
     subject_censored <- subject[-s_na_idx]
   }
-  bp <- CE.NB(data = data.frame(subject_censored$score), Nmax = Kmax, parallel = FALSE)
-  c(bpts = subject_censored[bp$BP.Loc], calc = bp)
+  
+  seg <- try(CE.NB(data = data.frame(subject_censored$score),
+                   Nmax = Kmax, parallel = FALSE), silent = FALSE)
+  if (inherits(seg, c("character", "try-error"))) {
+    seg <- list(bpts = GRanges())
+  } else {
+    list(bpts = subject_censored[seg$BP.Loc], BIC = seg$BIC, ll = seg$ll)
+  }
 }
 
+trace <- 0
 result <- lapply(s, calc_cp)
-bpts <- matrix_apply(result, function(u) pos(u["bpts"][[1]]))
+bpts <- matrix_apply(result, function(u) start(u$bpts))
 dim(bpts) <- dim(s)
 dimnames(bpts) <- dimnames(s)
 assay(e, "bpts") <- bpts
+bic <-  matrix_apply(result, function(u) u$BIC)
+dim(bic) <- dim(s)
+dimnames(bic) <- dimnames(s)
+assay(e, "bic") <- bic
 assay(e, "k") <- matrix_apply(bpts, length)
+x.bar <- matrix_apply(s, function(u) mean(u$score, na.rm = TRUE))
+assay(e, "x.bar") <- x.bar
+prop.unmasked <- apply(mask(e), 2, function(u) sum(width(GRangesList(u))) / width(rowRanges(e)))
+assay(e, "prop.unmasked") <- prop.unmasked
 
-rds_filename <- file.path(data_root, "GPosExp-Uzun.rds")
 saveRDS(e, rds_filename)
-
 
 bp <- assay(e, "bpts")
 
