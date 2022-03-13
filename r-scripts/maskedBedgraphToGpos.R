@@ -1,3 +1,4 @@
+library(GenomicRanges)
 library(rtracklayer)
 library(GPosExperiment)
 library(tidyverse)
@@ -67,9 +68,6 @@ n_s
 # plot(pos(subject_censored), subject_censored$score)
 # abline(v = pos(subject[s_na_idx]), col = "red")
 
-library(breakpoint)
-Kmax <- 10
-
 calc_cp <- function(subject) {
   trace <<- trace + 1
   print(trace)
@@ -89,6 +87,17 @@ calc_cp <- function(subject) {
   }
 }
 
+x.bar <- matrix_apply(s, function(u) mean(u$score, na.rm = TRUE))
+assay(e, "x.bar") <- x.bar
+prop.unmasked <- apply(GPosExperiment::mask(e), 2, function(u) sum(width(GRangesList(u))) / width(rowRanges(e)))
+assay(e, "prop.unmasked") <- prop.unmasked
+
+saveRDS(e, rds_filename)
+
+library(breakpoint)
+Kmax <- 10
+
+# TODO breakout to sepearte source file
 trace <- 0
 result <- lapply(s, calc_cp)
 bpts <- matrix_apply(result, function(u) start(u$bpts))
@@ -100,10 +109,6 @@ dim(bic) <- dim(s)
 dimnames(bic) <- dimnames(s)
 assay(e, "bic") <- bic
 assay(e, "k") <- matrix_apply(bpts, length)
-x.bar <- matrix_apply(s, function(u) mean(u$score, na.rm = TRUE))
-assay(e, "x.bar") <- x.bar
-prop.unmasked <- apply(mask(e), 2, function(u) sum(width(GRangesList(u))) / width(rowRanges(e)))
-assay(e, "prop.unmasked") <- prop.unmasked
 
 saveRDS(e, rds_filename)
 
