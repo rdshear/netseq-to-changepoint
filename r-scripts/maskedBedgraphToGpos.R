@@ -57,8 +57,12 @@ s <- scores(e, apply_mask = TRUE, zero_fill = TRUE)
 n_mask <- matrix_apply(s, function(u) sum(is.na(u$score)))
 
 n_s <- matrix_apply(s, function(u) sum(u$score, na.rm = TRUE))
-n_mask
-n_s
+
+x.bar <- matrix_apply(s, function(u) mean(u$score, na.rm = TRUE))
+assay(e, "x.bar") <- x.bar
+prop.unmasked <- apply(GPosExperiment::mask(e), 2, function(u) sum(width(GRangesList(u))) / width(rowRanges(e)))
+assay(e, "prop.unmasked") <- prop.unmasked
+
 
 # consider s[2,1], which has a single lost region
 # subject <- s[2,1][[1]]
@@ -86,11 +90,6 @@ calc_cp <- function(subject) {
     list(bpts = subject_censored[seg$BP.Loc], BIC = seg$BIC, ll = seg$ll)
   }
 }
-
-x.bar <- matrix_apply(s, function(u) mean(u$score, na.rm = TRUE))
-assay(e, "x.bar") <- x.bar
-prop.unmasked <- apply(GPosExperiment::mask(e), 2, function(u) sum(width(GRangesList(u))) / width(rowRanges(e)))
-assay(e, "prop.unmasked") <- prop.unmasked
 
 saveRDS(e, rds_filename)
 
