@@ -13,7 +13,7 @@ matrix_apply <- function(x, f, ...) {
 }
 
 data_root <- "/n/groups/churchman/rds19/data/S006"
-rds_filename <- file.path(data_root, "GPosExp-100Rand.rds")
+rds_filename <- file.path(data_root, "GPosExp-5000.rds")
 e <- readRDS(rds_filename)
 
 
@@ -28,8 +28,8 @@ r <- tibble(fn) %>%
      function(u) u$summary$after_filtering$read1_mean_length),
     reads_mb = round(map_int(j, 
      function(u) u$read1_after_filtering$total_reads) / 1E6, 2),
-    prop.unmasked =  colMeans(assay(e, "prop.unmasked")),
-    totmask = apply(mask(e), 2, function(u) sum(sum(width(GRangesList(u))))))
+    prop.unmasked =  colMeans(assay(e, "prop.unmasked")))
+    # totmask = apply(mask(e), 2, function(u) sum(sum(width(GRangesList(u))))))
 
 print(sort(r$mean_read_length))
 print(sort(r$prop.unmasked))
