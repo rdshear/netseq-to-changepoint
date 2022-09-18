@@ -17,7 +17,7 @@ names(which) <- which$ID
 gx <- c("YDR152W", "YDR311W", "YDR381W") # examples  (Uzun et al. 2021)
 which <- which[gx]
 
-bam_fnames <- list.files(file.path(data_root, "mm-to-censor"),
+bam_fnames <- list.files(file.path(data_root),
                          pattern = "*[.]bam$", full.names = TRUE)
 
 nsd <- mapply(function(id, fn) {

@@ -38,3 +38,7 @@ Cromwell.stdout.txt
 spitball.sh
 spitball.R
 Rplot.pdf
+README.html
+test/GPosMasked.rds
+test/wt-1.cp.base.gff3
+
