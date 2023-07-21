@@ -3,14 +3,7 @@ library(GPosExperiment)
 library(tidyverse)
 library(breakpoint)
 
-matrix_apply <- function(x, f, ...) {
-  result <- sapply(x, f, ...)
-  dim(result) <- dim(x)
-  dimnames(result) <- dimnames(x)
-  result
-}
-
-data_root <- "/n/groups/churchman/rds19/data/S006"
+data_root <- "~/n/groups/churchman/rds19/data/S006"
 
 which <- import(file.path(data_root, "genelist.gff"), genome = "sacCer3")
 names(which) <- which$ID
@@ -32,11 +25,12 @@ nsd <- mapply(function(id, fn) {
 
 e <- GPosExperiment(nsd, rowRanges = which)
 s <- scores(e, apply_mask = TRUE, zero_fill = TRUE)
-n_mask <- matrix_apply(s, function(u) sum(is.na(u$score)))
+n_mask <- apply(s, 1:2, function(u) sum(is.na(u[[1]]$score)))
 
-n_s <- matrix_apply(s, function(u) sum(u$score, na.rm = TRUE))
+n_s <- apply(s, 1:2, function(u) sum(u[[1]]$score, na.rm = TRUE))
 n_mask
 n_s
+
 
 # consider s[2,1], which has a single lost region
 # subject <- s[2,1][[1]]
@@ -68,8 +62,8 @@ assay(e, "bpts") <- bpts
 assay(e, "k") <- matrix_apply(bpts, length)
 
 rds_filename <- file.path(data_root, "GPosExp-Uzun.rds")
-#saveRDS(e, rds_filename)
-e <- readRDS(rds_filename)
+# saveRDS(e, rds_filename)
+# e <- readRDS(rds_filename)
 bp <- assay(e, "bpts")
 
 par(mfcol = c(ncol(e),nrow(e)), mar = c(2, 2, 1, 1) + 0.1)
@@ -83,14 +77,10 @@ for (j in 1:ncol(e)) {
   abline(v = v, col = "blue")
 }
 
-# result <- matrix_apply(s, calc_cp)
 
 
-# abline(v = pos(result$bpts), col = "purple")
-# bp.zi <- CE.ZINB(data = data.frame(subject_censored$score), Nmax = Kmax, parallel = FALSE)
-# s_bp.zi <- subject_censored[bp$BP.Loc]
-# abline(v = pos(s_bp), col = "blue")
-# 
+
+
 # bp <- CE.NB(data = data.frame(subject_censored$score), Nmax = Kmax, parallel = FALSE)
 # s_bp <- subject_censored[bp$BP.Loc]
 # abline(v = pos(s_bp), col = "blue")
