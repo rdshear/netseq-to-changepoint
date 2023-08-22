@@ -11,7 +11,8 @@ gx <- c("YDR152W", "YDR311W", "YDR381W") # examples  (Uzun et al. 2021)
 which <- which[gx]
 
 bam_fnames <- list.files(file.path(data_root),
-                         pattern = "*[.]bam$", full.names = TRUE)
+                         pattern = "^.*wt.*bam$", full.names = TRUE)
+bam_fnames
 
 nsd <- mapply(function(id, fn) {
   print(id)
@@ -22,7 +23,7 @@ nsd <- mapply(function(id, fn) {
   },
              id = basename(bam_fnames),
              fn = bam_fnames)
-
+str(nsd, max.level = 3)
 e <- GPosExperiment(nsd, rowRanges = which)
 s <- scores(e, apply_mask = TRUE, zero_fill = TRUE)
 n_mask <- apply(s, 1:2, function(u) sum(is.na(u[[1]]$score)))
@@ -30,7 +31,7 @@ n_mask <- apply(s, 1:2, function(u) sum(is.na(u[[1]]$score)))
 n_s <- apply(s, 1:2, function(u) sum(u[[1]]$score, na.rm = TRUE))
 n_mask
 n_s
-
+assay(e, "count") <- n_s
 
 # consider s[2,1], which has a single lost region
 # subject <- s[2,1][[1]]
