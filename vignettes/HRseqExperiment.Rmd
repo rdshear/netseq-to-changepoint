@@ -1,0 +1,118 @@
+---
+title: "HRseqExperiment"
+author:
+- name: Robert Shear
+vignette: |
+  %\VignetteIndexEntry{Draft Introduction to HRseqExperiment}
+  %\VignetteKeywords{sequence, sequencing}
+  %\VignettePackage{HRseqExperiment}  
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+output:
+  BiocStyle::pdf_document:
+    toc_float: true
+  BiocStyle::html_document:
+    toc_float: true
+Package: HRseqExperiment
+bibliography: references.bib
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Introduction
+
+The NET-seq assay [@Churchman2011] generates strand-aware count data (scores) at single nucleotide resolution. The `GenomicRanges::GRanges` class is a convenient structure for analyzing and operating on NET-seq assay data. Furthermore, the `GPos` extension of `GRanges`, which efficiently operates on elements of width 1, is particularly suitable for NET-seq data for scenarios where single-nucleotide resolution is needed. The `r BiocStyle::Biocpkg("HRseqExperiment")` class extends `RangedSummarizedExperiment` for the convenient use of such `GPos` data.
+
+# The `HRseqData` Class
+
+A `HRseqData` object contains the information necessary to add a sample to a HRseqExperiment object. At a minimum, it contains a string that identifies the sample and a GPos object containing the scores from that sample. The object may also contain a a `GenomeInfoDb::Seqinfo` object or the name of an NCBI registered genome.
+
+Additionally, each HRseqData object may have a mask in the form of a GRanges object. This object represents the genomic locations that should be considered missing data in the sample. [TODO Discuss multi-mapper/missing data issue]
+
+## From BAM File to HRseqData class
+
+The function `HRseqDataFromBAM` requires a sample name and a BAM file name. The function reads the BAM file and constructs a `GPos` object of counts. It also creates a mask `GRanges` object reflecting the locations to be ignored, that is the missing data.
+
+There are two additional parameters. The filter parameter is a `GRanges` object that limits the input to the the the specified ranges. This will typically be identical to the `RowRanges` data [TODO writeit]
+
+The SeqInfo parameter [TODO writeit]
+
+First, let's load the libraries we will need.
+
+```{r libraries}
+suppressWarnings({
+  library(HRseqExperiment, quietly = TRUE)
+  library(rtracklayer, quietly = TRUE)
+})
+```
+
+Next, set up the specifications for the genomic regions of interest.
+
+```{r row-definitions}
+data_root <- file.path(system.file(package = "HRseqExperiment"), "extdata")
+genelist = rtracklayer::import(file.path(data_root, "genelist.gff3.bgz"), genome = "sacCer3")
+names(genelist) <- genelist$ID
+# Keep only the gene name, no other columns are needed
+mcols(genelist) <- list(gene = genelist$gene)
+
+# The regions of interest. For demonstration purposes, take 3 genes
+genelist <- genelist[c("YAL062W", "YAL060W", "YAL059W")]
+genelist
+```
+
+[TODO construct toy data set] The BAM files must be sorted and indexed. [TODO Only if which clause exsits?] Our two samples are fragments from samples deposited in SRA. We construct a list of HRseqData objects.
+
+```{r BAM-to-samples}
+bam_files = c("wt-1" = "SRR12840066.bam", 
+              "wt-2" = "SRR12840067.bam")
+
+
+# Create a list of HRseqData objests
+nsd <- mapply(function(id, fn) {
+  HRseqDataFromBAM(id, 
+                     fn,
+                     genelist, 
+                    seqinfo(genelist))
+  },
+             id = names(bam_files),
+             fn = file.path(data_root, bam_files))
+
+# and now create
+```
+
+# The HRseqExperiment Object
+
+[TODO Writeit] Now construct the HRseqExperiment object.
+
+```{r create-Experiment}
+e <- HRseqExperiment(nsd, rowRanges = genelist)
+e
+```
+
+[TODO] Demonstrate `scores` and `mask` functions
+
+```{r investigate-samples}
+s <- scores(e, apply_mask = TRUE, zero_fill = TRUE)
+n_mask <- apply(s, 1:2, function(u) sum(is.na(u[[1]]$score)))
+
+n_s <- apply(s, 1:2, function(u) sum(u[[1]]$score, na.rm = TRUE))
+n_mask
+n_s
+```
+
+## Plots
+
+```{r plots}
+plot(e)
+```
+
+# Session information
+
+```{r SessionInfo}
+sessionInfo()
+```
